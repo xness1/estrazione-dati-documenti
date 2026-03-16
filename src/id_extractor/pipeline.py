@@ -8,10 +8,11 @@ from typing import List
 import cv2
 
 from .address import AddressData, extract_address
+from .back_detection import detect_back_side, estimate_address_region
 from .config import PipelineConfig
 from .discovery import iter_candidate_files
-from .mrz import MrzData, extract_mrz_lines, parse_td1
-from .ocr import preprocess_for_mrz, preprocess_for_text, run_tesseract
+from .mrz import MrzData
+from .ocr import preprocess_for_text, run_tesseract
 from .render import load_document_images
 
 
@@ -38,23 +39,15 @@ def run_pipeline(config: PipelineConfig) -> List[ExtractionResult]:
 
 def _process_page(path: Path, page_idx: int, image, config: PipelineConfig) -> ExtractionResult | None:
     h, w = image.shape[:2]
-    mrz_crop = image[int(h * config.mrz_region_top) : int(h * config.mrz_region_bottom), 0:w]
-    addr_crop = image[int(h * config.address_region_top) : int(h * config.address_region_bottom), 0:w]
-
-    mrz_img = preprocess_for_mrz(mrz_crop)
-    mrz_text = run_tesseract(
-        mrz_img,
-        lang="eng",
-        psm=6,
-        whitelist="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<",
-    )
-    mrz_lines = extract_mrz_lines(mrz_text)
-    mrz_data = parse_td1(mrz_lines)
+    back = detect_back_side(image)
+    mrz_data = back.mrz_data
 
     # Se MRZ non riconosciuta, salta per ridurre falsi positivi.
-    if not mrz_data.probable_back_side:
+    if not back.probable_back_side:
         return None
 
+    addr_top, addr_bottom = estimate_address_region(h, back.mrz_bbox)
+    addr_crop = image[addr_top:addr_bottom, 0:w]
     addr_text = _read_address_text(addr_crop, config.tesseract_lang)
     address = extract_address(addr_text)
 
