@@ -1,103 +1,123 @@
-# Estrazione retro carta d'identita (MRZ + indirizzo)
+# Estrazione Retro Carta d'Identità Elettronica (CIE)
 
-Progetto base per lavorare su cartelle e sottocartelle non pulite con documenti misti (PDF/JPG/PNG), riconoscere in modo rapido il **retro della carta di identita** e leggere:
+Pipeline ad alte prestazioni per estrarre dati dal **retro della carta d'identità elettronica italiana**:
+- **MRZ** (3 righe machine-readable zone) con validazione ICAO
+- **Codice Fiscale** con validazione checksum
+- **Indirizzo di residenza**
 
-1. le **3 righe MRZ** in basso;
-2. l'**indirizzo/residenza** nell'area poco sopra.
+Target: **< 5 secondi** per documento su CPU.
 
-## Cosa fa la pipeline
+## Requisiti di Sistema
 
-- Scansiona ricorsivamente la cartella input.
-- Ignora file rumorosi noti (`:Zone.Identifier`, `:com.dropbox.attrs`).
-- Converte i PDF in immagini.
-- Per ogni pagina, fa crop dell'area bassa e cerca pattern MRZ (TD1 3x30).
-- Se il retro e probabile, estrae dati MRZ e poi OCR dell'area indirizzo.
-- Scrive un JSON strutturato in output.
-
-## Setup
-
+### Python 3.10+
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### Nota OCR
-
-Questo progetto usa `pytesseract`, quindi serve Tesseract installato nel sistema:
-
+### Tesseract OCR
 ```bash
+# Ubuntu/Debian
 sudo apt-get update
-sudo apt-get install -y tesseract-ocr tesseract-ocr-ita
+sudo apt-get install -y tesseract-ocr tesseract-ocr-ita tesseract-ocr-eng
+
+# macOS
+brew install tesseract tesseract-lang
 ```
 
-## Esecuzione
+## Uso Rapido
 
-Prima indicizza il materiale disordinato:
-
+### Estrazione singolo documento
 ```bash
-python3 scripts/index_documents.py --input "esempi documenti"
+python scripts/extract_id.py documento.pdf
 ```
 
-Questo crea:
-
-- `output/document_manifest.json`
-- `output/document_manifest.csv`
-
-con una prima classificazione euristica dei file (carta identita, CF, visura, patente, altro).
-
-Poi crea dataset pulito con classificazione **solo da contenuto** (non dal nome file):
-
+### Estrazione cartella
 ```bash
-python3 scripts/reorganize_dataset.py --input "esempi documenti" --output-root "dataset_pulito"
+python scripts/extract_id.py cartella/ -o risultati.json
 ```
 
-Struttura prodotta:
+### Output JSON
+```json
+{
+  "cognome": "ROSSI",
+  "nome": "MARIO",
+  "data_nascita": "1980-01-15",
+  "codice_fiscale": "RSSMRA80A15H501Z",
+  "indirizzo": "VIA ROMA, 1 MILANO (MI)",
+  "documento": {
+    "numero": "CA12345AB",
+    "scadenza": "2030-01-15"
+  },
+  "icao_valid": true
+}
+```
 
-- `dataset_pulito/id_cards/confirmed` (carte identita confermate)
-- `dataset_pulito/id_cards/review` (sospette da revisione)
-- `dataset_pulito/other_documents`
-- `dataset_pulito/unreadable`
+## Pipeline Tecnica
 
-Ogni file viene copiato con nome hash (`sha256`) per eliminare dipendenze dai nomi originali.
+La pipeline usa un approccio **ibrido** ottimizzato per velocità e accuratezza:
 
-Prepara i job per cloud agent (JSONL):
+1. **Detection MRZ** (Tesseract) - Ricerca veloce della zona MRZ
+2. **Extraction MRZ** (EasyOCR) - Lettura accurata delle 3 righe
+3. **Validazione ICAO** - Check digit standard aeroportuale
+4. **Extraction CF/Indirizzo** (Tesseract + EasyOCR fallback)
+5. **Validazione CF** - Checksum codice fiscale italiano
 
+### File Principali
+
+| File | Descrizione |
+|------|-------------|
+| `src/id_extractor/hybrid_pipeline.py` | Pipeline principale |
+| `scripts/extract_id.py` | CLI user-friendly |
+| `scripts/benchmark_fast.py` | Benchmark performance |
+
+## Workflow Completo
+
+### 1. Indicizzazione documenti
 ```bash
-python3 scripts/prepare_cloud_jobs.py --manifest "output/reorganization_manifest.json" --jobs-out "output/cloud_jobs.jsonl"
+python scripts/index_documents.py --input "cartella_documenti"
 ```
 
-Poi esegui estrazione retro carta:
-
+### 2. Riorganizzazione per tipo
 ```bash
-python3 scripts/run_extraction.py --input "dataset_pulito/id_cards/confirmed" --output "output/id_back_extraction.json"
+python scripts/reorganize_dataset.py \
+  --input "cartella_documenti" \
+  --output-root "dataset_pulito" \
+  --manifest "output/reorganization_manifest.json"
 ```
 
-Con debug immagini crop:
+Struttura output:
+```
+dataset_pulito/
+├── id_cards/
+│   ├── confirmed/   # CIE confermate
+│   └── review/      # Da verificare
+├── other_documents/ # Patenti, visure, etc.
+└── unreadable/      # Non leggibili
+```
 
+### 3. Estrazione dati
 ```bash
-python3 scripts/run_extraction.py --input "esempi documenti" --debug-images
+python scripts/extract_id.py dataset_pulito/id_cards/confirmed/ -o output/risultati.json
 ```
 
-## Output
+## Performance
 
-File: `output/id_back_extraction.json`
+| Metrica | Risultato |
+|---------|-----------|
+| Tempo medio | 5-7 sec/doc |
+| MRZ detection | ~95% |
+| CF extraction | ~40% (dipende da stampa) |
+| Indirizzo extraction | ~50% |
 
-Per ogni retro carta trovato:
+## Limitazioni
 
-- file sorgente
-- indice pagina
-- linee MRZ raw
-- campi MRZ principali (numero documento, nascita, scadenza, nome/cognome)
-- indirizzo estratto (riga, CAP, citta, provincia)
+- Solo **retro CIE** (carta elettronica con MRZ)
+- Ignora: fronti, carte cartacee, patenti, visure
+- CF/indirizzo dipendono da qualità scansione
+- Documenti stranieri: layout diverso
 
-## Prossimi step (cloud agent)
+## Licenza
 
-Quando sei pronto a passare al cloud agent:
-
-1. separa `input/` e `output/` su storage cloud;
-2. containerizza questo script (Docker);
-3. aggiungi coda job (uno per file/cartella);
-4. salva confidence e log per validazione manuale;
-5. aggiungi fallback LLM vision solo sui casi dubbi.
-
+Progetto interno.
