@@ -66,6 +66,44 @@ class MrzResult:
 
 CF_PATTERN = re.compile(r'^[A-Z]{6}[0-9]{2}[ABCDEHLMPRST][0-9]{2}[A-Z][0-9]{3}[A-Z]$')
 
+CF_ODD = {
+    '0': 1, '1': 0, '2': 5, '3': 7, '4': 9, '5': 13, '6': 15, '7': 17, '8': 19, '9': 21,
+    'A': 1, 'B': 0, 'C': 5, 'D': 7, 'E': 9, 'F': 13, 'G': 15, 'H': 17, 'I': 19, 'J': 21,
+    'K': 2, 'L': 4, 'M': 18, 'N': 20, 'O': 11, 'P': 3, 'Q': 6, 'R': 8, 'S': 12, 'T': 14,
+    'U': 16, 'V': 10, 'W': 22, 'X': 25, 'Y': 24, 'Z': 23
+}
+CF_EVEN = {
+    '0': 0, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9,
+    'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'F': 5, 'G': 6, 'H': 7, 'I': 8, 'J': 9,
+    'K': 10, 'L': 11, 'M': 12, 'N': 13, 'O': 14, 'P': 15, 'Q': 16, 'R': 17, 'S': 18, 'T': 19,
+    'U': 20, 'V': 21, 'W': 22, 'X': 23, 'Y': 24, 'Z': 25
+}
+
+
+def _validate_cf_checksum(cf: str) -> bool:
+    """Valida il checksum del codice fiscale italiano."""
+    if not cf or len(cf) != 16:
+        return False
+    try:
+        total = sum(CF_ODD[c] if i % 2 == 0 else CF_EVEN[c] for i, c in enumerate(cf[:15]))
+        return cf[15] == chr(ord('A') + (total % 26))
+    except KeyError:
+        return False
+
+
+def _clean_address(addr: str) -> str:
+    """Pulisce e normalizza l'indirizzo."""
+    if not addr:
+        return addr
+    fixes = [
+        (r'\(w[Rr]\)', '(VR)'), (r'\(8[Zz]\)', '(BZ)'), (r'\{', '('), (r'\}', ')'),
+        (r'[;:]', ','), (r'\s+', ' '), (r'^\s*RESIDENCE\s*', ''), (r'^\s*WOHNADRESSE\s*/?\s*', ''),
+    ]
+    result = addr
+    for pattern, repl in fixes:
+        result = re.sub(pattern, repl, result, flags=re.IGNORECASE)
+    return result.strip()
+
 
 def _fix_cf_ocr(text: str) -> Optional[str]:
     """Corregge errori OCR e cerca CF in testo."""
@@ -372,8 +410,9 @@ def _process_pages(pages: List[np.ndarray], path: Path, start: float) -> List[Mr
                 mrz.page_index = page_idx
                 
                 cf, addr = _extract_cf_address(image, bounds)
-                mrz.codice_fiscale = cf
-                mrz.address = addr
+                if cf and _validate_cf_checksum(cf):
+                    mrz.codice_fiscale = cf
+                mrz.address = _clean_address(addr) if addr else None
                 
                 mrz.processing_time_ms = int((time.time() - page_start) * 1000)
                 return [mrz]
