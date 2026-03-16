@@ -461,9 +461,7 @@ def _parse_td1_mrz(lines: List[str]) -> MrzResult:
     
     overall_check = l2[29:30] if l2[29:30].isdigit() else None
     
-    name_parts = l3.split("<<", 1)
-    surname = name_parts[0].replace("<", " ").strip() or None
-    given_name = name_parts[1].replace("<", " ").strip() if len(name_parts) > 1 else None
+    surname, given_name = _parse_name_line(l3)
     
     codice_fiscale = _extract_codice_fiscale_from_mrz(l1, l2)
     
@@ -545,6 +543,63 @@ def _validate_codice_fiscale_format(cf: str) -> bool:
     
     pattern = r"^[A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z]$"
     return bool(re.match(pattern, cf))
+
+
+def _clean_name_ocr_errors(name: Optional[str]) -> Optional[str]:
+    """
+    Corregge errori OCR comuni nei nomi/cognomi.
+    """
+    if not name:
+        return name
+    
+    text = name.upper()
+    
+    text = text.replace("1", "I")
+    text = text.replace("0", "O")
+    
+    text = re.sub(r"[<KEX]+$", "", text)
+    text = re.sub(r"\s+[KE<X]+\s*$", "", text)
+    text = re.sub(r"[KE]{2,}", "", text)
+    text = re.sub(r"X+$", "", text)
+    
+    text = re.sub(r"X(?=[A-Z])", " ", text)
+    
+    text = re.sub(r"\s{2,}", " ", text).strip()
+    
+    return text if text else None
+
+
+def _parse_name_line(l3: str) -> tuple[Optional[str], Optional[str]]:
+    """
+    Parsing avanzato della linea 3 MRZ (cognome<<nome).
+    Gestisce casi dove il separatore << è mal letto come X< o <.
+    """
+    line = l3.replace("X<", "<<").replace("1<", "I<")
+    
+    if "<<" in line:
+        parts = line.split("<<", 1)
+        surname_raw = parts[0].replace("<", " ").strip()
+        given_name_raw = parts[1].replace("<", " ").strip() if len(parts) > 1 else None
+    else:
+        chunks = re.split(r"<+", line)
+        chunks = [c for c in chunks if c and len(c) > 1]
+        if len(chunks) >= 2:
+            surname_raw = chunks[0]
+            given_name_raw = " ".join(chunks[1:])
+        elif len(chunks) == 1:
+            surname_raw = chunks[0]
+            given_name_raw = None
+        else:
+            surname_raw = line.replace("<", " ").strip()
+            given_name_raw = None
+    
+    surname = _clean_name_ocr_errors(surname_raw)
+    given_name = _clean_name_ocr_errors(given_name_raw)
+    
+    if given_name:
+        given_name = re.sub(r"\s+[A-Z]$", "", given_name)
+    
+    return surname, given_name
 
 
 def _calculate_mrz_confidence(l1: str, l2: str, l3: str) -> float:
