@@ -50,6 +50,7 @@ class FastConfig:
     quick_detect_dpi: int = 100
     full_extract_dpi: int = 200
     min_mrz_confidence: float = 0.7
+    detect_timeout_sec: float = 2.0
     debug_mode: bool = False
 
 
@@ -361,17 +362,17 @@ def extract_mrz_full(image: np.ndarray, timeout_sec: float = 1.5,
             rb = region_bounds
             regions_to_try = [
                 rb,
+                (rb[0] - 0.05, rb[1] - 0.05),
                 (rb[0] + 0.05, rb[1] + 0.05),
-                (rb[0] + 0.10, rb[1] + 0.05),
-                (rb[0], rb[1] + 0.10),
-                (rb[0] + 0.05, rb[1]),
+                (rb[0] - 0.05, rb[1]),
+                (rb[0], rb[1] - 0.05),
             ]
             if is_portrait:
                 regions_to_try.extend([
+                    (0.20, 0.55),
                     (0.25, 0.60),
                     (0.30, 0.60),
                     (0.30, 0.65),
-                    (0.35, 0.70),
                 ])
             else:
                 regions_to_try.extend([
@@ -659,20 +660,13 @@ def process_file_fast(file_path: Path, config: FastConfig) -> List[ExtractionRes
             break
         
         is_back, detect_confidence, mrz_bounds = quick_detect_back_tessera(
-            image, config.timeouts.ocr_call_sec
+            image, config.detect_timeout_sec
         )
         
         if not is_back:
-            if config.debug_mode:
-                results.append(ExtractionResult(
-                    source_file=str(file_path),
-                    page_index=page_idx,
-                    status="skipped_not_back",
-                    processing_time_ms=int((time.time() - page_start) * 1000)
-                ))
             continue
         
-        if detect_confidence < 0.5:
+        if detect_confidence < 0.4:
             results.append(ExtractionResult(
                 source_file=str(file_path),
                 page_index=page_idx,
