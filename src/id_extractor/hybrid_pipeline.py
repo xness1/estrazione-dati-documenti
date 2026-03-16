@@ -101,7 +101,7 @@ def _fix_cf_ocr(text: str) -> Optional[str]:
 
 
 def _extract_cf_address(image: np.ndarray, mrz_bounds: Tuple[float, float]) -> Tuple[Optional[str], Optional[str]]:
-    """Estrae CF e indirizzo con Tesseract (veloce)."""
+    """Estrae CF e indirizzo con Tesseract, fallback EasyOCR."""
     h, w = image.shape[:2]
     mrz_top = mrz_bounds[0]
     mrz_bottom = mrz_bounds[1]
@@ -136,6 +136,16 @@ def _extract_cf_address(image: np.ndarray, mrz_bounds: Tuple[float, float]) -> T
                 break
         if address:
             break
+    
+    if not address:
+        reader = _get_reader()
+        if reader:
+            results = reader.readtext(region, detail=1)
+            for bbox, text, conf in results:
+                text_up = text.upper()
+                if any(kw in text_up for kw in addr_kw) and conf > 0.4:
+                    address = text.strip()
+                    break
     
     return cf, address
 
