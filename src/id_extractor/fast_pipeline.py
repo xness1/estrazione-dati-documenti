@@ -23,6 +23,12 @@ import fitz
 import numpy as np
 import pytesseract
 
+try:
+    from mrz.checker.td1 import TD1CodeChecker
+    HAS_MRZ_LIB = True
+except ImportError:
+    HAS_MRZ_LIB = False
+
 fitz.TOOLS.mupdf_display_errors(False)
 
 
@@ -395,6 +401,10 @@ def extract_mrz_full(image: np.ndarray, timeout_sec: float = 1.5,
             lines, score = _try_region(top_pct, bottom_pct)
             
             if len(lines) >= 3:
+                mrz = _parse_td1_mrz_icao(lines[:3])
+                if mrz:
+                    return mrz
+                
                 mrz = _parse_td1_mrz(lines[:3])
                 if mrz.confidence > best_result.confidence:
                     best_result = mrz
@@ -405,6 +415,59 @@ def extract_mrz_full(image: np.ndarray, timeout_sec: float = 1.5,
         return best_result
     
     return run_with_timeout(_extract, timeout_sec, MrzResult(raw_lines=[], confidence=0.0))
+
+
+def _parse_td1_mrz_icao(lines: List[str]) -> Optional[MrzResult]:
+    """
+    Parsing MRZ usando libreria ICAO standard (come aeroporti).
+    Valida automaticamente check digits.
+    """
+    if not HAS_MRZ_LIB or len(lines) < 3:
+        return None
+    
+    try:
+        l1 = lines[0][:30].ljust(30, "<")
+        l2 = lines[1][:30].ljust(30, "<")
+        l3 = lines[2][:30].ljust(30, "<")
+        
+        mrz_string = f"{l1}\n{l2}\n{l3}"
+        
+        checker = TD1CodeChecker(mrz_string, check_expiry=False)
+        fields = checker.fields()
+        
+        birth_date = None
+        if fields.birth_date and len(fields.birth_date) == 6:
+            yy = int(fields.birth_date[:2])
+            mm = int(fields.birth_date[2:4])
+            dd = int(fields.birth_date[4:6])
+            year = 1900 + yy if yy > 30 else 2000 + yy
+            birth_date = f"{year:04d}-{mm:02d}-{dd:02d}"
+        
+        expiry_date = None
+        if fields.expiry_date and len(fields.expiry_date) == 6:
+            yy = int(fields.expiry_date[:2])
+            mm = int(fields.expiry_date[2:4])
+            dd = int(fields.expiry_date[4:6])
+            year = 2000 + yy
+            expiry_date = f"{year:04d}-{mm:02d}-{dd:02d}"
+        
+        return MrzResult(
+            raw_lines=[l1, l2, l3],
+            document_type=fields.document_type,
+            issuing_country=fields.country,
+            document_number=fields.document_number,
+            surname=fields.surname,
+            given_name=fields.name,
+            birth_date=birth_date,
+            sex=fields.sex,
+            expiry_date=expiry_date,
+            nationality=fields.nationality,
+            codice_fiscale=None,
+            is_valid_td1=True,
+            confidence=1.0
+        )
+    except Exception:
+        return None
 
 
 def _parse_td1_mrz(lines: List[str]) -> MrzResult:
