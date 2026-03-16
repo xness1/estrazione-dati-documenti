@@ -79,19 +79,18 @@ def _fix_cf_ocr(text: str) -> Optional[str]:
         chars = list(chunk)
         
         num_pos = [6, 7, 9, 10, 12, 13, 14]
-        for j in num_pos:
-            if chars[j] == 'O': chars[j] = '0'
-            if chars[j] == 'I': chars[j] = '1'
-            if chars[j] == 'S': chars[j] = '5'
-            if chars[j] == 'L': chars[j] = '1'
-            if chars[j] == 'Z': chars[j] = '2'
-            if chars[j] == 'G': chars[j] = '6'
+        num_fix = {'O': '0', 'I': '1', 'S': '5', 'L': '1', 'Z': '2', 'G': '6', 'T': '7', 'B': '8'}
         
         let_pos = [0, 1, 2, 3, 4, 5, 8, 11, 15]
+        let_fix = {'0': 'O', '1': 'I', '5': 'S', '8': 'B', '2': 'Z', '6': 'G', '7': 'T'}
+        
+        for j in num_pos:
+            if chars[j] in num_fix:
+                chars[j] = num_fix[chars[j]]
+        
         for j in let_pos:
-            if chars[j] == '0': chars[j] = 'O'
-            if chars[j] == '1': chars[j] = 'I'
-            if chars[j] == '5': chars[j] = 'S'
+            if chars[j] in let_fix:
+                chars[j] = let_fix[chars[j]]
         
         fixed = ''.join(chars)
         if CF_PATTERN.match(fixed):
@@ -137,15 +136,20 @@ def _extract_cf_address(image: np.ndarray, mrz_bounds: Tuple[float, float]) -> T
         if address:
             break
     
-    if not address:
+    if not address or not cf:
         reader = _get_reader()
         if reader:
             results = reader.readtext(region, detail=1)
             for bbox, text, conf in results:
                 text_up = text.upper()
-                if any(kw in text_up for kw in addr_kw) and conf > 0.4:
+                
+                if not cf and conf > 0.5:
+                    candidate = _fix_cf_ocr(text)
+                    if candidate:
+                        cf = candidate
+                
+                if not address and any(kw in text_up for kw in addr_kw) and conf > 0.4:
                     address = text.strip()
-                    break
     
     return cf, address
 
