@@ -93,8 +93,8 @@ def _quick_detect_tesseract(image: np.ndarray) -> Tuple[bool, Optional[Tuple[flo
     """
     h, w = image.shape[:2]
     
-    if w > 600:
-        scale = 600 / w
+    if w > 900:
+        scale = 900 / w
         small = cv2.resize(image, None, fx=scale, fy=scale)
     else:
         small = image
@@ -103,7 +103,12 @@ def _quick_detect_tesseract(image: np.ndarray) -> Tuple[bool, Optional[Tuple[flo
     is_portrait = sh > sw * 1.2
     
     if is_portrait:
-        regions = [(0.20, 0.55), (0.25, 0.50), (0.30, 0.60), (0.35, 0.65)]
+        regions = [
+            (0.20, 0.55), (0.25, 0.55), (0.30, 0.60), 
+            (0.35, 0.65), (0.40, 0.70), (0.45, 0.75),
+            (0.50, 0.80), (0.55, 0.85), (0.60, 0.90),
+            (0.65, 0.95), (0.70, 1.0),
+        ]
     else:
         regions = [(0.55, 1.0), (0.50, 0.90), (0.60, 1.0)]
     
@@ -120,7 +125,8 @@ def _quick_detect_tesseract(image: np.ndarray) -> Tuple[bool, Optional[Tuple[flo
         lines = []
         for line in text.split('\n'):
             cleaned = line.strip().upper().replace(" ", "")
-            if "<" in cleaned and len(cleaned) > 20:
+            delims = cleaned.count("<") + cleaned.count("K")
+            if delims >= 3 and len(cleaned) > 20:
                 lines.append(cleaned)
         
         if len(lines) >= 2:
@@ -137,6 +143,8 @@ def _extract_mrz_easyocr(image: np.ndarray, bounds: Tuple[float, float]) -> List
     
     h, w = image.shape[:2]
     top, bottom = bounds
+    top = max(0, top - 0.05)
+    bottom = min(1.0, bottom + 0.10)
     
     mrz_region = image[int(h * top):int(h * bottom), :]
     
@@ -225,24 +233,9 @@ def _format_date(raw: str, is_expiry: bool) -> Optional[str]:
         return None
 
 
-def process_document(path: Path, dpi: int = 150) -> List[MrzResult]:
-    """
-    Processa documento con pipeline ibrida veloce.
-    Target: < 5 secondi su CPU.
-    """
+def _process_pages(pages: List[np.ndarray], path: Path, start: float) -> List[MrzResult]:
+    """Process loaded pages for MRZ."""
     results = []
-    start = time.time()
-    
-    pages = _load_pages(path, dpi)
-    if not pages:
-        return [MrzResult(
-            source_file=str(path),
-            page_index=0,
-            status="unreadable",
-            error="Cannot load file",
-            processing_time_ms=int((time.time() - start) * 1000)
-        )]
-    
     for page_idx, image in enumerate(pages):
         page_start = time.time()
         
@@ -260,8 +253,7 @@ def process_document(path: Path, dpi: int = 150) -> List[MrzResult]:
                 mrz.source_file = str(path)
                 mrz.page_index = page_idx
                 mrz.processing_time_ms = int((time.time() - page_start) * 1000)
-                results.append(mrz)
-                break
+                return [mrz]
             else:
                 results.append(MrzResult(
                     source_file=str(path),
@@ -271,8 +263,41 @@ def process_document(path: Path, dpi: int = 150) -> List[MrzResult]:
                     processing_time_ms=int((time.time() - page_start) * 1000),
                     error="ICAO validation failed"
                 ))
+    return results
+
+
+def process_document(path: Path) -> List[MrzResult]:
+    """
+    Processa documento con pipeline ibrida veloce.
+    Target: < 5 secondi su CPU.
+    """
+    start = time.time()
     
-    return results if results else [MrzResult(
+    pages = _load_pages(path, dpi=150)
+    if not pages:
+        return [MrzResult(
+            source_file=str(path),
+            page_index=0,
+            status="unreadable",
+            error="Cannot load file",
+            processing_time_ms=int((time.time() - start) * 1000)
+        )]
+    
+    results = _process_pages(pages, path, start)
+    if results and results[0].status == "confirmed":
+        return results
+    
+    pages_hires = _load_pages(path, dpi=200)
+    results_hires = _process_pages(pages_hires, path, start)
+    if results_hires and results_hires[0].status == "confirmed":
+        return results_hires
+    
+    if results:
+        return results
+    if results_hires:
+        return results_hires
+        
+    return [MrzResult(
         source_file=str(path),
         page_index=0,
         status="not_found",
