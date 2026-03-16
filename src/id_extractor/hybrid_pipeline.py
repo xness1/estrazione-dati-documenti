@@ -55,10 +55,89 @@ class MrzResult:
     expiry_date: Optional[str] = None
     nationality: Optional[str] = None
     
+    codice_fiscale: Optional[str] = None
+    address: Optional[str] = None
+    
     raw_lines: Optional[List[str]] = None
     icao_valid: bool = False
     processing_time_ms: int = 0
     error: Optional[str] = None
+
+
+CF_PATTERN = re.compile(r'^[A-Z]{6}[0-9]{2}[ABCDEHLMPRST][0-9]{2}[A-Z][0-9]{3}[A-Z]$')
+
+
+def _fix_cf_ocr(text: str) -> Optional[str]:
+    """Corregge errori OCR e cerca CF in testo."""
+    clean = re.sub(r'[^A-Z0-9]', '', text.upper())
+    
+    for i in range(max(0, len(clean) - 15)):
+        chunk = clean[i:i+16]
+        if len(chunk) < 16:
+            continue
+            
+        chars = list(chunk)
+        
+        num_pos = [6, 7, 9, 10, 12, 13, 14]
+        for j in num_pos:
+            if chars[j] == 'O': chars[j] = '0'
+            if chars[j] == 'I': chars[j] = '1'
+            if chars[j] == 'S': chars[j] = '5'
+            if chars[j] == 'L': chars[j] = '1'
+            if chars[j] == 'Z': chars[j] = '2'
+            if chars[j] == 'G': chars[j] = '6'
+        
+        let_pos = [0, 1, 2, 3, 4, 5, 8, 11, 15]
+        for j in let_pos:
+            if chars[j] == '0': chars[j] = 'O'
+            if chars[j] == '1': chars[j] = 'I'
+            if chars[j] == '5': chars[j] = 'S'
+        
+        fixed = ''.join(chars)
+        if CF_PATTERN.match(fixed):
+            return fixed
+    
+    return None
+
+
+def _extract_cf_address(image: np.ndarray, mrz_bounds: Tuple[float, float]) -> Tuple[Optional[str], Optional[str]]:
+    """Estrae CF e indirizzo con Tesseract (veloce)."""
+    h, w = image.shape[:2]
+    mrz_top = mrz_bounds[0]
+    mrz_bottom = mrz_bounds[1]
+    
+    region = image[int(h * 0.15):int(h * mrz_bottom), :]
+    gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
+    
+    text = pytesseract.image_to_string(gray, lang='ita+eng')
+    
+    cf = _fix_cf_ocr(text)
+    
+    addr_kw = ['VIA ', 'PIAZZA ', 'CORSO ', 'VIALE ', 'V.LE ', 'P.ZZA ', 'LARGO ', 'VICOLO ']
+    address = None
+    
+    lines = text.split('\n')
+    for i, line in enumerate(lines):
+        line_up = line.upper().strip()
+        
+        for kw in addr_kw:
+            if kw in line_up:
+                addr_text = line.strip()
+                
+                if not re.search(r'\([A-Z]{2}\)', line_up):
+                    for j in range(i+1, min(i+3, len(lines))):
+                        next_line = lines[j].strip()
+                        if next_line and len(next_line) > 2:
+                            addr_text += ' ' + next_line
+                            if re.search(r'\([A-Z]{2}\)', next_line.upper()):
+                                break
+                
+                address = addr_text
+                break
+        if address:
+            break
+    
+    return cf, address
 
 
 def _load_pages(path: Path, dpi: int = 150) -> List[np.ndarray]:
@@ -252,6 +331,11 @@ def _process_pages(pages: List[np.ndarray], path: Path, start: float) -> List[Mr
             if mrz and mrz.icao_valid:
                 mrz.source_file = str(path)
                 mrz.page_index = page_idx
+                
+                cf, addr = _extract_cf_address(image, bounds)
+                mrz.codice_fiscale = cf
+                mrz.address = addr
+                
                 mrz.processing_time_ms = int((time.time() - page_start) * 1000)
                 return [mrz]
             else:
