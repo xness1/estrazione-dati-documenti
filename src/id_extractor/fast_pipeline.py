@@ -438,9 +438,11 @@ def _parse_td1_mrz(lines: List[str]) -> MrzResult:
     l2 = lines[1][:MRZ_LEN].ljust(MRZ_LEN, "<")
     l3 = lines[2][:MRZ_LEN].ljust(MRZ_LEN, "<")
     
-    document_type = l1[0:2].replace("<", "").strip() or None
-    issuing_country = l1[2:5].replace("<", "").strip() or None
-    document_number = l1[5:14].replace("<", "").strip() or None
+    document_type = l1[0:2].replace("<", "").replace("K", "").strip() or None
+    issuing_country = l1[2:5].replace("<", "").replace("K", "").strip() or None
+    
+    doc_raw = l1[5:14].replace("<", "").replace("K", "").strip()
+    document_number = doc_raw.replace("L", "4").replace("B", "8").replace("O", "0") if doc_raw else None
     doc_number_check = l1[14:15] if l1[14:15].isdigit() else None
     
     optional_l1 = l1[15:30].replace("<", "").strip()
