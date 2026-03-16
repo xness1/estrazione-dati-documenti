@@ -4,3 +4,5 @@ Pillow
 PyMuPDF
 pytesseract
 python-dateutil
+mrz
+easyocr
