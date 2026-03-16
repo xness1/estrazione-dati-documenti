@@ -83,13 +83,21 @@ def main():
             
             if r.mrz and r.mrz.is_valid_td1:
                 print(f"MRZ Valid: {r.mrz.is_valid_td1} (conf: {r.mrz.confidence:.2f})")
+                print(f"\n  --- DATI DOCUMENTO ---")
+                print(f"  Tipo documento: {r.mrz.document_type}")
+                print(f"  Paese emittente: {r.mrz.issuing_country}")
+                print(f"  Numero documento: {r.mrz.document_number}")
+                print(f"\n  --- DATI ANAGRAFICI ---")
                 print(f"  Cognome: {r.mrz.surname}")
                 print(f"  Nome: {r.mrz.given_name}")
                 print(f"  Data nascita: {r.mrz.birth_date}")
-                print(f"  Scadenza: {r.mrz.expiry_date}")
                 print(f"  Sesso: {r.mrz.sex}")
+                print(f"  Nazionalità: {r.mrz.nationality}")
+                print(f"\n  --- VALIDITÀ ---")
+                print(f"  Scadenza: {r.mrz.expiry_date}")
                 if r.mrz.codice_fiscale:
-                    print(f"  Codice Fiscale: {r.mrz.codice_fiscale}")
+                    print(f"\n  --- CODICE FISCALE ---")
+                    print(f"  CF: {r.mrz.codice_fiscale}")
             
             if r.address and r.address.raw_text:
                 print(f"Address (raw): {r.address.raw_text[:100]}...")

@@ -55,16 +55,28 @@ class FastConfig:
 
 @dataclass 
 class MrzResult:
-    """Risultato estrazione MRZ."""
+    """Risultato estrazione MRZ TD1 completo."""
     raw_lines: List[str]
+    
+    document_type: Optional[str] = None
+    issuing_country: Optional[str] = None
     document_number: Optional[str] = None
+    
     surname: Optional[str] = None
     given_name: Optional[str] = None
+    
     birth_date: Optional[str] = None
-    expiry_date: Optional[str] = None
     sex: Optional[str] = None
+    expiry_date: Optional[str] = None
     nationality: Optional[str] = None
+    
     codice_fiscale: Optional[str] = None
+    
+    birth_date_check: Optional[str] = None
+    expiry_date_check: Optional[str] = None
+    doc_number_check: Optional[str] = None
+    overall_check: Optional[str] = None
+    
     is_valid_td1: bool = False
     confidence: float = 0.0
 
@@ -379,19 +391,58 @@ def extract_mrz_full(image: np.ndarray, timeout_sec: float = 1.5,
 
 
 def _parse_td1_mrz(lines: List[str]) -> MrzResult:
-    """Parsing MRZ formato TD1 (carta identità italiana)."""
+    """
+    Parsing MRZ formato TD1 (carta identità italiana).
+    
+    TD1 Layout (3 righe x 30 caratteri):
+    
+    Linea 1: [TT][CCC][NNNNNNNNN][C][OOOOOOOOOOOOOOOO]
+      - TT: Tipo documento (ID, I<, C<)
+      - CCC: Paese emittente (ITA)
+      - NNNNNNNNN: Numero documento (9 char)
+      - C: Check digit numero documento
+      - O...: Campo opzionale (può contenere CF in Italia)
+    
+    Linea 2: [DDDDDD][C][S][EEEEEE][C][NNN][OOOOOOOOOOO][C]
+      - DDDDDD: Data nascita (YYMMDD)
+      - C: Check digit data nascita
+      - S: Sesso (M/F)
+      - EEEEEE: Data scadenza (YYMMDD)
+      - C: Check digit scadenza
+      - NNN: Nazionalità
+      - O...: Campo opzionale
+      - C: Check digit complessivo
+    
+    Linea 3: [COGNOME]<<[NOME]<<<<<...
+    """
     MRZ_LEN = 30
     
     l1 = lines[0][:MRZ_LEN].ljust(MRZ_LEN, "<")
     l2 = lines[1][:MRZ_LEN].ljust(MRZ_LEN, "<")
     l3 = lines[2][:MRZ_LEN].ljust(MRZ_LEN, "<")
     
+    document_type = l1[0:2].replace("<", "").strip() or None
+    issuing_country = l1[2:5].replace("<", "").strip() or None
     document_number = l1[5:14].replace("<", "").strip() or None
+    doc_number_check = l1[14:15] if l1[14:15].isdigit() else None
     
-    birth_date = _parse_mrz_date(l2[0:6], is_expiry=False)
+    optional_l1 = l1[15:30].replace("<", "").strip()
+    
+    birth_date_raw = l2[0:6]
+    birth_date_check = l2[6:7] if l2[6:7].isdigit() else None
+    birth_date = _parse_mrz_date(birth_date_raw, is_expiry=False)
+    
     sex = l2[7:8].replace("<", "") or None
-    expiry_date = _parse_mrz_date(l2[8:14], is_expiry=True)
-    nationality = l2[15:18].replace("<", "") or None
+    if sex not in ("M", "F"):
+        sex = None
+    
+    expiry_date_raw = l2[8:14]
+    expiry_date_check = l2[14:15] if l2[14:15].isdigit() else None
+    expiry_date = _parse_mrz_date(expiry_date_raw, is_expiry=True)
+    
+    nationality = l2[15:18].replace("<", "").strip() or None
+    
+    overall_check = l2[29:30] if l2[29:30].isdigit() else None
     
     name_parts = l3.split("<<", 1)
     surname = name_parts[0].replace("<", " ").strip() or None
@@ -404,14 +455,20 @@ def _parse_td1_mrz(lines: List[str]) -> MrzResult:
     
     return MrzResult(
         raw_lines=[l1, l2, l3],
+        document_type=document_type,
+        issuing_country=issuing_country,
         document_number=document_number,
         surname=surname,
         given_name=given_name,
         birth_date=birth_date,
-        expiry_date=expiry_date,
         sex=sex,
+        expiry_date=expiry_date,
         nationality=nationality,
         codice_fiscale=codice_fiscale,
+        birth_date_check=birth_date_check,
+        expiry_date_check=expiry_date_check,
+        doc_number_check=doc_number_check,
+        overall_check=overall_check,
         is_valid_td1=is_valid,
         confidence=confidence
     )
@@ -443,14 +500,34 @@ def _parse_mrz_date(raw: str, is_expiry: bool) -> Optional[str]:
 def _extract_codice_fiscale_from_mrz(l1: str, l2: str) -> Optional[str]:
     """
     Estrae codice fiscale dalla MRZ italiana.
-    Il CF è in posizione 15-30 della linea 1.
+    Il CF è in posizione 15-30 della linea 1 (campo opzionale).
+    
+    Formato CF: AAABBB00A00A000A (16 caratteri)
+    - 3 lettere cognome + 3 lettere nome + 2 cifre anno
+    - 1 lettera mese + 2 cifre giorno + 1 lettera comune
+    - 3 cifre/lettere codice comune + 1 lettera controllo
     """
-    cf_region = l1[15:30].replace("<", "")
+    cf_region = l1[15:30].replace("<", "").strip()
+    
     if len(cf_region) == 16:
-        return cf_region
-    if len(cf_region) >= 11:
-        return cf_region[:16] if len(cf_region) >= 16 else None
+        if _validate_codice_fiscale_format(cf_region):
+            return cf_region
+    
+    if len(cf_region) >= 16:
+        candidate = cf_region[:16]
+        if _validate_codice_fiscale_format(candidate):
+            return candidate
+    
     return None
+
+
+def _validate_codice_fiscale_format(cf: str) -> bool:
+    """Valida formato codice fiscale italiano."""
+    if len(cf) != 16:
+        return False
+    
+    pattern = r"^[A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z]$"
+    return bool(re.match(pattern, cf))
 
 
 def _calculate_mrz_confidence(l1: str, l2: str, l3: str) -> float:
