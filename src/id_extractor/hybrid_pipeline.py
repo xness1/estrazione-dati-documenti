@@ -69,6 +69,8 @@ CF_PATTERN = re.compile(r'^[A-Z]{6}[0-9]{2}[ABCDEHLMPRST][0-9]{2}[A-Z][0-9]{3}[A
 
 def _fix_cf_ocr(text: str) -> Optional[str]:
     """Corregge errori OCR e cerca CF in testo."""
+    if '<' in text or text.upper().startswith(('C<ITA', 'CRITA', 'IDITA')):
+        return None
     clean = re.sub(r'[^A-Z0-9]', '', text.upper())
     
     for i in range(max(0, len(clean) - 15)):
@@ -140,16 +142,39 @@ def _extract_cf_address(image: np.ndarray, mrz_bounds: Tuple[float, float]) -> T
         reader = _get_reader()
         if reader:
             results = reader.readtext(region, detail=1)
-            for bbox, text, conf in results:
+            results.sort(key=lambda x: x[0][0][1])
+            
+            for i, (bbox, text, conf) in enumerate(results):
                 text_up = text.upper()
                 
-                if not cf and conf > 0.5:
+                if not cf and conf > 0.5 and '<' not in text:
                     candidate = _fix_cf_ocr(text)
-                    if candidate:
+                    if candidate and not candidate.startswith(('CITA', 'C<IT', 'CRIT')):
                         cf = candidate
+                
+                if not cf and ('FISCALE' in text_up or 'FISCAL' in text_up):
+                    for j in range(i+1, min(i+4, len(results))):
+                        next_text = results[j][1]
+                        candidate = _fix_cf_ocr(next_text)
+                        if candidate:
+                            cf = candidate
+                            break
                 
                 if not address and any(kw in text_up for kw in addr_kw) and conf > 0.4:
                     address = text.strip()
+                
+                if not address and ('RESIDENZA' in text_up or 'RESIDENCE' in text_up):
+                    addr_parts = []
+                    for j in range(i+1, min(i+5, len(results))):
+                        next_text = results[j][1]
+                        if '<' in next_text or 'CODICE' in next_text.upper():
+                            break
+                        if next_text.strip() and len(next_text.strip()) > 2:
+                            addr_parts.append(next_text.strip())
+                            if re.search(r'\([A-Z]{2}\)', next_text.upper()):
+                                break
+                    if addr_parts:
+                        address = ' '.join(addr_parts)
     
     return cf, address
 
