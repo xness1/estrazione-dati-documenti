@@ -185,9 +185,10 @@ def quick_detect_back_tessera(image: np.ndarray, timeout_sec: float = 1.0) -> tu
         
         if is_portrait:
             regions = [
-                (0.15, 0.55),
+                (0.15, 0.50),
                 (0.20, 0.55),
                 (0.25, 0.60),
+                (0.30, 0.60),
                 (0.30, 0.65),
                 (0.35, 0.70),
                 (0.40, 0.75),
@@ -357,13 +358,20 @@ def extract_mrz_full(image: np.ndarray, timeout_sec: float = 1.5,
         is_portrait = h > w * 1.2
         
         if region_bounds:
-            regions_to_try = [region_bounds]
+            rb = region_bounds
+            regions_to_try = [
+                rb,
+                (rb[0] + 0.05, rb[1] + 0.05),
+                (rb[0] + 0.10, rb[1] + 0.05),
+                (rb[0], rb[1] + 0.10),
+                (rb[0] + 0.05, rb[1]),
+            ]
             if is_portrait:
                 regions_to_try.extend([
-                    (region_bounds[0] - 0.05, region_bounds[1]),
-                    (region_bounds[0], region_bounds[1] + 0.05),
-                    (0.15, 0.55),
-                    (0.20, 0.55),
+                    (0.25, 0.60),
+                    (0.30, 0.60),
+                    (0.30, 0.65),
+                    (0.35, 0.70),
                 ])
             else:
                 regions_to_try.extend([
@@ -373,8 +381,9 @@ def extract_mrz_full(image: np.ndarray, timeout_sec: float = 1.5,
         else:
             if is_portrait:
                 regions_to_try = [
-                    (0.15, 0.55), (0.20, 0.55), (0.25, 0.60), (0.30, 0.65),
-                    (0.35, 0.70), (0.40, 0.75), (0.45, 0.80), (0.50, 0.85),
+                    (0.15, 0.50), (0.20, 0.55), (0.25, 0.60), (0.30, 0.60),
+                    (0.30, 0.65), (0.35, 0.70), (0.40, 0.75), (0.45, 0.80),
+                    (0.50, 0.85),
                 ]
             else:
                 regions_to_try = [(0.55, 1.0), (0.50, 0.95), (0.45, 0.90)]
